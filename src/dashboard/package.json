@@ -1,5 +1,5 @@
 {
-  "name": "dashboard",
+  "name": "ghcp-metrics-dashboard",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -46,7 +46,6 @@
     "clsx": "^2.1.1",
     "cmdk": "^0.2.1",
     "csv-stringify": "^6.5.2",
-    "dashboard": "file:",
     "date-fns": "^3.6.0",
     "embla-carousel-react": "^8.1.6",
     "input-otp": "^1.2.4",

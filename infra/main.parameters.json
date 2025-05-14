@@ -10,6 +10,9 @@
     },
     "githubToken": {
       "value": ""
+    },
+    "deployFrontendAsStaticWebApp": {
+      "value": false
     }
   }
 }

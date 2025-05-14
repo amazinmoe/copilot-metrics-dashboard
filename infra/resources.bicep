@@ -42,27 +42,52 @@ var storageDataWriterRole = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
   'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
 )
+var storageFileDataPrivilegedContributorRole = subscriptionResourceId(
+  'Microsoft.Authorization/roleDefinitions',
+  '69566ab7-960f-475b-8e7c-b3118f30c6bd'
+)
+
+var storageAccountKey = listKeys(storage.id, storage.apiVersion).keys[0].value
 
 var databaseName = 'platform-engineering'
 var orgContainerName = 'history'
 var metricsContainerName = 'metrics_history'
 var seatsContainerName = 'seats_history'
 
+// App Service Plan for the Web App (F1 SKU)
 resource appServicePlan 'Microsoft.Web/serverfarms@2020-06-01' = {
   name: appserviceName
   location: location
   tags: tags
   properties: {
-    reserved: true
+    reserved: true // Retaining this as the original plan was Linux; F1/D1 support Linux
   }
   sku: {
-    name: 'P0v3'
-    tier: 'Premium0V3'
-    size: 'P0v3'
-    family: 'Pv3'
-    capacity: 1
+    name: 'B1' // Changed from F1
+    tier: 'Basic' // Changed from Free
+    size: 'B1' // Changed from F1
+    family: 'B' // Changed from F
+    capacity: 1 // Capacity for B1 is typically 1
   }
   kind: 'linux'
+}
+
+// New Consumption App Service Plan for the Function App
+var functionAppServicePlanName = '${functionAppName}-plan'
+
+resource functionAppServicePlan 'Microsoft.Web/serverfarms@2022-09-01' = {
+  name: functionAppServicePlanName
+  location: location
+  tags: tags
+  kind: 'functionapp' // Specify kind for consumption plan
+  properties: {
+    reserved: true // Required for Linux consumption plans
+  }
+  sku: {
+    name: 'Y1' // Consumption plan SKU
+    tier: 'Dynamic' // Tier for Consumption plan
+    family: 'Y' // Family for Consumption plan
+  }
 }
 
 var teamNameAppSettings = [
@@ -79,9 +104,8 @@ resource copilotDataFunction 'Microsoft.Web/sites@2023-12-01' = {
   identity: { type: 'SystemAssigned' }
   location: location
   properties: {
-    serverFarmId: appServicePlan.id
+    serverFarmId: functionAppServicePlan.id // Use the new consumption plan
     siteConfig: {
-      alwaysOn: true
       linuxFxVersion: 'DOTNET-ISOLATED|8.0'
       appSettings: union(teamNameAppSettings, [
         {
@@ -89,8 +113,16 @@ resource copilotDataFunction 'Microsoft.Web/sites@2023-12-01' = {
           value: appInsights.properties.ConnectionString
         }
         {
-          name: 'AzureWebJobsStorage__accountname'
-          value: storage.name
+          name: 'AzureWebJobsStorage' // Corrected and using full connection string
+          value: 'DefaultEndpointsProtocol=https;AccountName=${storage.name};AccountKey=${storageAccountKey};EndpointSuffix=${environment().suffixes.storage}'
+        }
+        {
+          name: 'WEBSITE_CONTENTAZUREFILECONNECTIONSTRING' // Ensured for Consumption Plan
+          value: 'DefaultEndpointsProtocol=https;AccountName=${storage.name};AccountKey=${storageAccountKey};EndpointSuffix=${environment().suffixes.storage}'
+        }
+        {
+          name: 'WEBSITE_CONTENTSHARE' // Ensured for Consumption Plan
+          value: toLower(functionAppName) // Conventionally lowercase function app name
         }
         {
           name: 'FUNCTIONS_EXTENSION_VERSION'
@@ -99,6 +131,10 @@ resource copilotDataFunction 'Microsoft.Web/sites@2023-12-01' = {
         {
           name: 'FUNCTIONS_WORKER_RUNTIME'
           value: 'dotnet-isolated'
+        }
+        {
+          name: 'WEBSITE_RUN_FROM_PACKAGE' // Standard setting for run from package
+          value: '1'
         }
         {
           name: 'AZURE_COSMOSDB_ENDPOINT__accountEndpoint'
@@ -133,6 +169,7 @@ resource copilotDataFunction 'Microsoft.Web/sites@2023-12-01' = {
   }
 }
 
+// Deploy App Service for frontend (formerly conditional)
 resource webApp 'Microsoft.Web/sites@2020-06-01' = {
   name: webappName
   location: location
@@ -142,7 +179,7 @@ resource webApp 'Microsoft.Web/sites@2020-06-01' = {
     httpsOnly: true
     siteConfig: {
       linuxFxVersion: 'node|22-lts'
-      alwaysOn: true
+      alwaysOn: true // Enabled for Basic tier and above
       appCommandLine: 'next start'
       ftpsState: 'Disabled'
       minTlsVersion: '1.2'
@@ -212,9 +249,10 @@ resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
   }
 }
 
+// Diagnostic settings for App Service (formerly conditional)
 resource webDiagnosticSettings 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
   name: diagnosticSettingName
-  scope: webApp
+  scope: webApp // Use the webApp
   properties: {
     workspaceId: logAnalyticsWorkspace.id
     logs: [
@@ -237,6 +275,7 @@ resource kvFunctionAppPermissions 'Microsoft.Authorization/roleAssignments@2020-
   }
 }
 
+// Key Vault permissions for App Service frontend (formerly conditional)
 resource kvWebAppPermissions 'Microsoft.Authorization/roleAssignments@2020-04-01-preview' = {
   name: guid(kv.id, webApp.name, keyVaultSecretsOfficerRole)
   scope: kv
@@ -383,6 +422,16 @@ resource storageDataContributor 'Microsoft.Authorization/roleAssignments@2022-04
     principalId: copilotDataFunction.identity.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: storageDataWriterRole
+  }
+}
+
+resource storageFileDataPrivilegedContributorForFunction 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storage.id, copilotDataFunction.name, 'StorageFileDataPrivilegedContributor')
+  scope: storage // Assign on the storage account
+  properties: {
+    principalId: copilotDataFunction.identity.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: storageFileDataPrivilegedContributorRole
   }
 }
 

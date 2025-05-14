@@ -1,2 +1,4 @@
 .azure/
 .idea/
+
+.env
